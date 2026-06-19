@@ -109,7 +109,6 @@ async function run() {
             };
 
             const result = await TicketCollection.insertOne(finalData);
-            console.log(finalData);
             res.status(201).json({
                 success: true,
                 insertedId: result.insertedId,
@@ -191,7 +190,6 @@ async function run() {
                 });
             }
 
-
             if (Number(price) <= 0 || Number(quantity) <= 0) {
                 return res.status(400).send({
                     success: false,
@@ -216,7 +214,6 @@ async function run() {
                     message: "Rejected tickets cannot be updated",
                 });
             }
-
 
             const updatedDoc = {
                 $set: {
@@ -245,7 +242,36 @@ async function run() {
             });
         });
 
+        // Delete Ticket
+        app.delete("/api/vendor/my-tickets/:id", async (req, res) => {
+            const { id } = req.params;
 
+            const ticketId = { _id: new ObjectId(id) };
+
+            const ticket = await TicketCollection.findOne(ticketId);
+
+            if (!ticket) {
+                return res.status(404).send({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            if (ticket.verificationStatus === "rejected") {
+                return res.status(403).send({
+                    success: false,
+                    message: "Rejected ticket cannot be deleted",
+                });
+            }
+
+            const result = await TicketCollection.deleteOne(ticketId);
+
+            res.send({
+                success: true,
+                message: "Ticket deleted successfully",
+                deletedCount: result.deletedCount,
+            });
+        });
 
         await client.db("admin").command({ ping: 1 });
         console.log(
