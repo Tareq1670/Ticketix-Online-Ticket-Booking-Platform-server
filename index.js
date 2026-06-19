@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 dotenv.config();
 
@@ -117,6 +117,27 @@ async function run() {
             });
         });
 
+        // SingleTicket Data
+        app.get("/api/vendor/my-tickets/:id", async (req, res) => {
+            const { id } = req.params;
+
+            const query = { _id: new ObjectId(id) };
+
+            const result = await TicketCollection.findOne(query);
+
+            if (!result) {
+                return res.status(404).send({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            res.send({
+                success: true,
+                data: result,
+            });
+        });
+
         // Get My Added Ticket
         app.get("/api/vendor/my-tickets", async (req, res) => {
             const vendorId = req.query.vendorId;
@@ -137,6 +158,94 @@ async function run() {
                 data: result,
             });
         });
+
+        // Ticket Update
+        app.patch("/api/vendor/my-tickets/:id", async (req, res) => {
+            const { id } = req.params;
+
+            const {
+                title,
+                from,
+                to,
+                transportType,
+                price,
+                quantity,
+                departureDate,
+                perks,
+                image,
+            } = req.body;
+
+            if (
+                !id ||
+                !title ||
+                !from ||
+                !to ||
+                !transportType ||
+                !price ||
+                !quantity ||
+                !departureDate
+            ) {
+                return res.status(400).send({
+                    success: false,
+                    message: "Missing required fields",
+                });
+            }
+
+
+            if (Number(price) <= 0 || Number(quantity) <= 0) {
+                return res.status(400).send({
+                    success: false,
+                    message: "Price and quantity must be greater than 0",
+                });
+            }
+
+            const existingTicket = await TicketCollection.findOne({
+                _id: new ObjectId(id),
+            });
+
+            if (!existingTicket) {
+                return res.status(404).send({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            if (existingTicket.verificationStatus === "rejected") {
+                return res.status(403).send({
+                    success: false,
+                    message: "Rejected tickets cannot be updated",
+                });
+            }
+
+
+            const updatedDoc = {
+                $set: {
+                    title: title.trim(),
+                    from: from.trim(),
+                    to: to.trim(),
+                    transportType,
+                    price: Number(price),
+                    quantity: Number(quantity),
+                    departureDate,
+                    perks: Array.isArray(perks) ? perks : [],
+                    image: image || existingTicket.image || "",
+                    updatedAt: new Date(),
+                },
+            };
+
+            const result = await TicketCollection.updateOne(
+                { _id: new ObjectId(id) },
+                updatedDoc,
+            );
+
+            res.send({
+                success: true,
+                message: "Ticket updated successfully",
+                modifiedCount: result.modifiedCount,
+            });
+        });
+
+
 
         await client.db("admin").command({ ping: 1 });
         console.log(
