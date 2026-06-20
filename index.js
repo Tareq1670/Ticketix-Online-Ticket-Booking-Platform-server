@@ -29,6 +29,8 @@ async function run() {
     try {
         await client.connect();
         const db = client.db(process.env.DB_NAME);
+
+        const UserCollection = db.collection("user");
         const TicketCollection = db.collection("tickets");
 
         // Ticket Add
@@ -271,6 +273,52 @@ async function run() {
                 message: "Ticket deleted successfully",
                 deletedCount: result.deletedCount,
             });
+        });
+
+        // Role Update
+        app.patch("/api/users/:id/role", async (req, res) => {
+            const { id } = req.params;
+            const { role } = req.body;
+
+            const query = { _id: new ObjectId(id) };
+            const updateRole = {
+                $set: { role: role },
+            };
+
+            const result = await UserCollection.updateOne(query, updateRole);
+            if (result.matchedCount === 0)
+                return res
+                    .status(404)
+                    .send({ success: false, message: "User not found" });
+
+            res.send({ success: true, message: `Role updated to ${role}` });
+        });
+
+        // Fraud Update
+        app.patch("/api/users/:id/fraud", async (req, res) => {
+            const { id } = req.params;
+            const { isFraud } = req.body;
+
+            
+                const result = await UserCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            isFraud: isFraud,
+                            status: isFraud ? "fraud" : "active",
+                        },
+                    },
+                );
+
+                if (result.matchedCount === 0)
+                    return res
+                        .status(404)
+                        .send({ success: false, message: "User not found" });
+
+                res.send({
+                    success: true,
+                    message: `Fraud status updated to ${isFraud}`,
+                })
         });
 
         await client.db("admin").command({ ping: 1 });
