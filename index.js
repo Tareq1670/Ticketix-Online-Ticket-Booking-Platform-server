@@ -160,6 +160,177 @@ async function run() {
             });
         });
 
+        // Get ALL tickets (for admin manage tickets page)
+        app.get("/api/admin/all-tickets", async (req, res) => {
+            const result = await TicketCollection.find()
+                .sort({ createdAt: -1 })
+                .toArray();
+            res.send(result);
+        });
+
+        // Approve ticket
+        app.patch("/api/admin/tickets/:ticketId/approve", async (req, res) => {
+            const { ticketId } = req.params;
+
+            const ticket = await TicketCollection.findOne({
+                _id: new ObjectId(ticketId),
+            });
+
+            if (!ticket) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            if (ticket.verificationStatus === "approved") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Ticket is already approved",
+                });
+            }
+
+            const result = await TicketCollection.updateOne(
+                { _id: new ObjectId(ticketId) },
+                {
+                    $set: {
+                        verificationStatus: "approved",
+                        approvedAt: new Date(),
+                        updatedAt: new Date(),
+                    },
+                },
+            );
+
+            if (result.modifiedCount === 0) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Failed to approve ticket",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Ticket approved successfully!",
+            });
+        });
+
+        // Reject ticket
+        app.patch("/api/admin/tickets/:ticketId/reject", async (req, res) => {
+            const { ticketId } = req.params;
+
+            const ticket = await TicketCollection.findOne({
+                _id: new ObjectId(ticketId),
+            });
+
+            if (!ticket) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            if (ticket.verificationStatus === "rejected") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Ticket is already rejected",
+                });
+            }
+
+            // If ticket was advertised, remove advertisement
+            const updateData = {
+                verificationStatus: "rejected",
+                isAdvertised: false,
+                advertisedAt: null,
+                updatedAt: new Date(),
+            };
+
+            const result = await TicketCollection.updateOne(
+                { _id: new ObjectId(ticketId) },
+                { $set: updateData },
+            );
+
+            if (result.modifiedCount === 0) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Failed to reject ticket",
+                });
+            }
+
+            res.json({
+                success: true,
+                message: "Ticket rejected successfully!",
+            });
+        });
+
+        // Get Tickets
+        app.get("/api/admin/approved-tickets", async (req, res) => {
+            const result = await TicketCollection.find({
+                verificationStatus: "approved",
+            })
+                .sort({ createdAt: -1 })
+                .toArray();
+            res.send(result);
+        });
+
+        // Toggle advertise status
+        app.patch(
+            "/api/admin/tickets/:ticketId/advertise",
+            async (req, res) => {
+                const { ticketId } = req.params;
+                const { isAdvertised } = req.body;
+
+                if (isAdvertised === true) {
+                    const advertisedCount =
+                        await TicketCollection.countDocuments({
+                            isAdvertised: true,
+                        });
+                    if (advertisedCount >= 6) {
+                        return res.status(400).json({
+                            success: false,
+                            message:
+                                "Maximum 6 tickets can be advertised at a time. Please unadvertise one first.",
+                        });
+                    }
+                }
+
+                const result = await TicketCollection.updateOne(
+                    { _id: new ObjectId(ticketId) },
+                    {
+                        $set: {
+                            isAdvertised: isAdvertised,
+                            advertisedAt: isAdvertised ? new Date() : null,
+                        },
+                    },
+                );
+
+                if (result.modifiedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Ticket not found or no changes made",
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: isAdvertised
+                        ? "Ticket advertised successfully!"
+                        : "Ticket unadvertised successfully!",
+                });
+            },
+        );
+
+        // Get advertised tickets (for homepage)
+        app.get("/api/advertised-tickets", async (req, res) => {
+            const result = await TicketCollection.find({
+                isAdvertised: true,
+                verificationStatus: "approved",
+            })
+                .sort({ advertisedAt: -1 })
+                .limit(6)
+                .toArray();
+            res.send(result);
+        });
+
         // Ticket Update
         app.patch("/api/vendor/my-tickets/:id", async (req, res) => {
             const { id } = req.params;
@@ -299,26 +470,25 @@ async function run() {
             const { id } = req.params;
             const { isFraud } = req.body;
 
-            
-                const result = await UserCollection.updateOne(
-                    { _id: new ObjectId(id) },
-                    {
-                        $set: {
-                            isFraud: isFraud,
-                            status: isFraud ? "fraud" : "active",
-                        },
+            const result = await UserCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        isFraud: isFraud,
+                        status: isFraud ? "fraud" : "active",
                     },
-                );
+                },
+            );
 
-                if (result.matchedCount === 0)
-                    return res
-                        .status(404)
-                        .send({ success: false, message: "User not found" });
+            if (result.matchedCount === 0)
+                return res
+                    .status(404)
+                    .send({ success: false, message: "User not found" });
 
-                res.send({
-                    success: true,
-                    message: `Fraud status updated to ${isFraud}`,
-                })
+            res.send({
+                success: true,
+                message: `Fraud status updated to ${isFraud}`,
+            });
         });
 
         await client.db("admin").command({ ping: 1 });
