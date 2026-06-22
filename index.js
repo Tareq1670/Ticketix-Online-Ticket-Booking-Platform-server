@@ -705,39 +705,144 @@ async function run() {
 
         // User Booked Canceled
         app.patch("/api/bookings/:id/cancel", async (req, res) => {
-            
-                const { id } = req.params;
-                const query = {_id: new ObjectId(id)}
-                const updateStatus = { $set: { status: "cancelled", updatedAt: new Date() } }
+            const { id } = req.params;
+            const query = { _id: new ObjectId(id) };
+            const updateStatus = {
+                $set: { status: "cancelled", updatedAt: new Date() },
+            };
 
-                const booking = await BookingCollection.findOne(query);
-                if (!booking) {
-                    return res
-                        .status(404)
-                        .json({ success: false, message: "Booking not found" });
-                }
+            const booking = await BookingCollection.findOne(query);
+            if (!booking) {
+                return res
+                    .status(404)
+                    .json({ success: false, message: "Booking not found" });
+            }
 
-                
-                if (booking.status !== "pending") {
-                    return res.status(400).json({
-                        success: false,
-                        message: `Cannot cancel booking. Status is currently '${booking.status}'`,
-                    });
-                }
-
-                await BookingCollection.updateOne(
-                    query,
-                    updateStatus,
-                );
-
-                res.json({
-                    success: true,
-                    message: "Booking cancelled successfully",
+            if (booking.status !== "pending") {
+                return res.status(400).json({
+                    success: false,
+                    message: `Cannot cancel booking. Status is currently '${booking.status}'`,
                 });
-            
+            }
+
+            await BookingCollection.updateOne(query, updateStatus);
+
+            res.json({
+                success: true,
+                message: "Booking cancelled successfully",
+            });
         });
 
+        // Vendor Booking Request
+        app.get("/api/vendor/booking-requests", async (req, res) => {
+            const { vendorId } = req.query;
 
+            if (!vendorId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Vendor ID required",
+                });
+            }
+
+            const matchConditions = [{ vendorId: vendorId }];
+            if (ObjectId.isValid(vendorId)) {
+                matchConditions.push({ vendorId: new ObjectId(vendorId) });
+            }
+
+            const bookings = await BookingCollection.aggregate([
+                {
+                    $match: { $or: matchConditions },
+                },
+                {
+                    $lookup: {
+                        from: "users",
+                        localField: "userEmail",
+                        foreignField: "email",
+                        as: "userInfo",
+                    },
+                },
+                {
+                    $addFields: {
+                        user: { $arrayElemAt: ["$userInfo", 0] },
+                    },
+                },
+                {
+                    $project: {
+                        userInfo: 0,
+                    },
+                },
+                { $sort: { createdAt: -1 } },
+            ]).toArray();
+
+            res.json({ success: true, data: bookings });
+        });
+
+        // Vendor Booking Accept
+        app.patch("/api/vendor/bookings/:id/accept", async (req, res) => {
+            const { id } = req.params;
+            const query = { _id: new ObjectId(id) };
+            const booking = await BookingCollection.findOne(query);
+
+            if (!booking) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Booking not found",
+                });
+            }
+
+            if (booking.status !== "pending") {
+                return res.status(400).json({
+                    success: false,
+                    message: `Booking is already ${booking.status}`,
+                });
+            }
+
+            await BookingCollection.updateOne(query, {
+                $set: {
+                    status: "accepted",
+                    acceptedAt: new Date(),
+                    updatedAt: new Date(),
+                },
+            });
+
+            res.json({
+                success: true,
+                message: "Booking accepted successfully!",
+            });
+        });
+
+        // Vendor Booking Reject
+        app.patch("/api/vendor/bookings/:id/reject", async (req, res) => {
+            const { id } = req.params;
+            const query = { _id: new ObjectId(id) };
+            const booking = await BookingCollection.findOne(query);
+
+            if (!booking) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Booking not found",
+                });
+            }
+
+            if (booking.status !== "pending") {
+                return res.status(400).json({
+                    success: false,
+                    message: `Booking is already ${booking.status}`,
+                });
+            }
+
+            await BookingCollection.updateOne(query, {
+                $set: {
+                    status: "rejected",
+                    rejectedAt: new Date(),
+                    updatedAt: new Date(),
+                },
+            });
+            res.json({
+                success: true,
+                message: "Booking rejected successfully!",
+            });
+        });
     } finally {
         // await client.close();
     }
