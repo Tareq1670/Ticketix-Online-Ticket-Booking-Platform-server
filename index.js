@@ -674,7 +674,68 @@ async function run() {
             });
         });
 
+        // User Booked Tickets
+        app.get("/api/users/my-bookings", async (req, res) => {
+            const { userId } = req.query;
 
+            if (!userId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "User id is required",
+                });
+            }
+
+            let query = {};
+
+            if (userId) {
+                query = {
+                    userId,
+                };
+            }
+
+            const result = await BookingCollection.find(query)
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.status(200).json({
+                success: true,
+                data: result,
+            });
+        });
+
+        // User Booked Canceled
+        app.patch("/api/bookings/:id/cancel", async (req, res) => {
+            
+                const { id } = req.params;
+                const query = {_id: new ObjectId(id)}
+                const updateStatus = { $set: { status: "cancelled", updatedAt: new Date() } }
+
+                const booking = await BookingCollection.findOne(query);
+                if (!booking) {
+                    return res
+                        .status(404)
+                        .json({ success: false, message: "Booking not found" });
+                }
+
+                
+                if (booking.status !== "pending") {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Cannot cancel booking. Status is currently '${booking.status}'`,
+                    });
+                }
+
+                await BookingCollection.updateOne(
+                    query,
+                    updateStatus,
+                );
+
+                res.json({
+                    success: true,
+                    message: "Booking cancelled successfully",
+                });
+            
+        });
 
 
     } finally {
