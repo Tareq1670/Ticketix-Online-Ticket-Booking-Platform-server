@@ -955,6 +955,227 @@ async function run() {
 
             res.json({ success: true, data: result });
         });
+
+        // Revenue data for Vendor
+        app.get("/api/vendor/revenue-overview", async (req, res) => {
+            try {
+                const { vendorId } = req.query;
+
+                if (!vendorId) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Vendor ID is required",
+                    });
+                }
+
+                const allTickets = await TicketCollection.find({
+                    vendorId,
+                }).toArray();
+                const paidBookings = await BookingCollection.find({
+                    vendorId,
+                    status: "paid",
+                }).toArray();
+                const allBookings = await BookingCollection.find({
+                    vendorId,
+                }).toArray();
+
+                const totalTicketsAdded = allTickets.reduce(
+                    (sum, t) =>
+                        sum +
+                        (Number(t.quantity || 0) + Number(t.soldQuantity || 0)),
+                    0,
+                );
+                const totalTicketsSold = allTickets.reduce(
+                    (sum, t) => sum + Number(t.soldQuantity || 0),
+                    0,
+                );
+                const totalRevenue = paidBookings.reduce(
+                    (sum, b) => sum + Number(b.totalPrice || 0),
+                    0,
+                );
+
+                const remainingTickets = totalTicketsAdded - totalTicketsSold;
+                const sellRate =
+                    totalTicketsAdded > 0
+                        ? (
+                              (totalTicketsSold / totalTicketsAdded) *
+                              100
+                          ).toFixed(1)
+                        : 0;
+                const avgTicketPrice =
+                    totalTicketsSold > 0
+                        ? (totalRevenue / totalTicketsSold).toFixed(0)
+                        : 0;
+
+                const pendingBookings = allBookings.filter(
+                    (b) => b.status === "pending",
+                ).length;
+                const acceptedBookings = allBookings.filter(
+                    (b) => b.status === "accepted",
+                ).length;
+                const rejectedBookings = allBookings.filter(
+                    (b) => b.status === "rejected",
+                ).length;
+
+                const potentialRevenue = allBookings
+                    .filter((b) => b.status === "accepted")
+                    .reduce((sum, b) => sum + Number(b.totalPrice || 0), 0);
+
+                const monthlyData = {};
+                const monthNames = [
+                    "Jan",
+                    "Feb",
+                    "Mar",
+                    "Apr",
+                    "May",
+                    "Jun",
+                    "Jul",
+                    "Aug",
+                    "Sep",
+                    "Oct",
+                    "Nov",
+                    "Dec",
+                ];
+                const now = new Date();
+                for (let i = 5; i >= 0; i--) {
+                    const date = new Date(
+                        now.getFullYear(),
+                        now.getMonth() - i,
+                        1,
+                    );
+                    const key = `${date.getFullYear()}-${String(
+                        date.getMonth() + 1,
+                    ).padStart(2, "0")}`;
+                    monthlyData[key] = {
+                        month: monthNames[date.getMonth()],
+                        year: date.getFullYear(),
+                        ticketsAdded: 0,
+                        ticketsSold: 0,
+                        revenue: 0,
+                    };
+                }
+
+                allTickets.forEach((t) => {
+                    if (!t.createdAt) return;
+                    const c = new Date(t.createdAt);
+                    const key = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, "0")}`;
+                    if (monthlyData[key]) {
+                        monthlyData[key].ticketsAdded +=
+                            Number(t.quantity || 0) +
+                            Number(t.soldQuantity || 0);
+                    }
+                });
+
+                paidBookings.forEach((b) => {
+                    const d = new Date(b.paidAt || b.updatedAt || b.createdAt);
+                    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                    if (monthlyData[key]) {
+                        monthlyData[key].ticketsSold += Number(b.quantity || 0);
+                        monthlyData[key].revenue += Number(b.totalPrice || 0);
+                    }
+                });
+
+                const monthlyArray = Object.values(monthlyData);
+
+                const currentMonthRevenue =
+                    monthlyArray[monthlyArray.length - 1]?.revenue || 0;
+                const lastMonthRevenue =
+                    monthlyArray[monthlyArray.length - 2]?.revenue || 0;
+                const revenueGrowth =
+                    lastMonthRevenue > 0
+                        ? (
+                              ((currentMonthRevenue - lastMonthRevenue) /
+                                  lastMonthRevenue) *
+                              100
+                          ).toFixed(1)
+                        : currentMonthRevenue > 0
+                          ? 100
+                          : 0;
+
+                const transportBreakdown = {};
+                allTickets.forEach((t) => {
+                    const type = t.transportType || "Other";
+                    if (!transportBreakdown[type]) {
+                        transportBreakdown[type] = {
+                            type,
+                            ticketsAdded: 0,
+                            ticketsSold: 0,
+                            revenue: 0,
+                        };
+                    }
+                    transportBreakdown[type].ticketsAdded +=
+                        Number(t.quantity || 0) + Number(t.soldQuantity || 0);
+                    transportBreakdown[type].ticketsSold += Number(
+                        t.soldQuantity || 0,
+                    );
+                });
+                paidBookings.forEach((b) => {
+                    const type = b.transportType || "Other";
+                    if (!transportBreakdown[type]) {
+                        transportBreakdown[type] = {
+                            type,
+                            ticketsAdded: 0,
+                            ticketsSold: 0,
+                            revenue: 0,
+                        };
+                    }
+                    transportBreakdown[type].revenue += Number(
+                        b.totalPrice || 0,
+                    );
+                });
+                const transportArray = Object.values(transportBreakdown);
+
+                const statusCounts = { approved: 0, pending: 0, rejected: 0 };
+                allTickets.forEach((t) => {
+                    const s = t.verificationStatus || "pending";
+                    if (statusCounts[s] !== undefined) statusCounts[s]++;
+                });
+                const statusArray = Object.entries(statusCounts)
+                    .filter(([_, v]) => v > 0)
+                    .map(([label, value]) => ({
+                        label: label.charAt(0).toUpperCase() + label.slice(1),
+                        value,
+                    }));
+
+                let topTicket = null;
+                if (transportArray.length > 0) {
+                    topTicket = [...transportArray].sort(
+                        (a, b) => b.revenue - a.revenue,
+                    )[0];
+                }
+
+                return res.json({
+                    success: true,
+                    data: {
+                        summary: {
+                            totalTicketsAdded,
+                            totalTicketsSold,
+                            totalRevenue,
+                            totalTicketTypes: allTickets.length,
+                            remainingTickets,
+                            sellRate: Number(sellRate),
+                            avgTicketPrice: Number(avgTicketPrice),
+                            revenueGrowth: Number(revenueGrowth),
+                            potentialRevenue,
+                            pendingBookings,
+                            acceptedBookings,
+                            rejectedBookings,
+                            currentMonthRevenue,
+                            topTransport: topTicket?.type || "N/A",
+                        },
+                        monthlyData: monthlyArray,
+                        transportBreakdown: transportArray,
+                        ticketStatusBreakdown: statusArray,
+                    },
+                });
+            } catch (error) {
+                console.error("Revenue overview error:", error);
+                return res.status(500).json({
+                    success: false,
+                    message: "Failed to fetch revenue data",
+                });
+            }
+        });
     } finally {
         // await client.close();
     }
