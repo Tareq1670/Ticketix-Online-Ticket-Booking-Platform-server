@@ -913,7 +913,6 @@ async function run() {
                 bookingId,
                 ticketId,
                 userId,
-                userEmail,
                 ticketTitle: booking.title,
                 amount: Number(amount),
                 paymentDate: new Date(),
@@ -935,8 +934,26 @@ async function run() {
             });
 
             await TicketCollection.updateOne(ticketQuery, {
-                $inc : {quantity : - booking.quantity , soldQuantity : booking.quantity}
-            })
+                $inc: {
+                    quantity: -booking.quantity,
+                    soldQuantity: booking.quantity,
+                },
+            });
+        });
+
+        // Transaction Get By Users
+        app.get("/api/users/transactions", async (req, res) => {
+            const { userId } = req.query;
+            if (!userId)
+                return res
+                    .status(400)
+                    .json({ success: false, message: "userId required" });
+
+            const result = await TransactionCollection.find({ userId })
+                .sort({ paymentDate: -1 })
+                .toArray();
+
+            res.json({ success: true, data: result });
         });
     } finally {
         // await client.close();
