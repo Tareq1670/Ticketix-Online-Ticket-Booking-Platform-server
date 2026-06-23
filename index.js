@@ -33,6 +33,7 @@ async function run() {
         const UserCollection = db.collection("user");
         const TicketCollection = db.collection("tickets");
         const BookingCollection = db.collection("bookings");
+        const TransactionCollection = db.collection("transaction");
 
         // Ticket Add
         app.post("/api/add-ticket", async (req, res) => {
@@ -842,6 +843,100 @@ async function run() {
                 success: true,
                 message: "Booking rejected successfully!",
             });
+        });
+
+        // Transaction Data add
+        app.post("/api/payment/confirm", async (req, res) => {
+            const {
+                transactionId,
+                bookingId,
+                ticketId,
+                userId,
+                amount,
+                userEmail,
+            } = req.body;
+
+            const bookingQuery = { _id: new ObjectId(bookingId) };
+            const ticketQuery = { _id: new ObjectId(ticketId) };
+
+            if (
+                !transactionId ||
+                !bookingId ||
+                !ticketId ||
+                !userId ||
+                !amount ||
+                !userEmail
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Missing required fields",
+                });
+            }
+
+            const isExits = await TransactionCollection.findOne({
+                transactionId,
+            });
+            if (isExits) {
+                return res.status(200).json({
+                    success: true,
+                    message: "Already processed",
+                    alreadyProcessed: true,
+                });
+            }
+
+            const booking = await BookingCollection.findOne(bookingQuery);
+
+            if (!booking) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Booking not found",
+                });
+            }
+
+            if (booking.status === "paid") {
+                return res.status(200).json({
+                    success: true,
+                    message: "Already paid",
+                    alreadyProcessed: true,
+                });
+            }
+
+            const ticket = await TicketCollection.findOne(ticketQuery);
+            if (!ticket) {
+                return res
+                    .status(404)
+                    .json({ success: false, message: "Ticket not found" });
+            }
+
+            const transactionData = {
+                transactionId,
+                bookingId,
+                ticketId,
+                userId,
+                userEmail,
+                ticketTitle: booking.title,
+                amount: Number(amount),
+                paymentDate: new Date(),
+            };
+
+            const result =
+                await TransactionCollection.insertOne(transactionData);
+            res.status(201).json({
+                success: true,
+                message: "Payment confirmed successfully",
+            });
+
+            await BookingCollection.updateOne(bookingQuery, {
+                $set: {
+                    status: "paid",
+                    paidAt: new Date(),
+                    updatedAt: new Date(),
+                },
+            });
+
+            await TicketCollection.updateOne(ticketQuery, {
+                $inc : {quantity : - booking.quantity , soldQuantity : booking.quantity}
+            })
         });
     } finally {
         // await client.close();
