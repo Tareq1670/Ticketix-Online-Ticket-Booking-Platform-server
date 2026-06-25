@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 dotenv.config();
 
@@ -25,6 +26,74 @@ const client = new MongoClient(uri, {
     },
 });
 
+const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+);
+
+const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    console.log("header :" ,authHeader);
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+            success: false,
+            message: "Authorization header is required",
+        });
+    }
+
+    const token = authHeader.split(" ")[1];
+    console.log("token :" ,token);
+    if (!token) {
+        return res.status(401).json({
+            success: false,
+            message: "Authorization header is required",
+        });
+    }
+
+    try {
+        const { payload } = await jwtVerify(token, JWKS);
+        req.user = payload;
+        next();
+    } catch (error) {
+        return res.status(401).json({
+            success: false,
+            message: "Invalid token",
+        });
+    }
+};
+
+const userVerify = (req, res, next) => {
+    const user = req.user;
+    if (user.role !== "user") {
+        return res.status(403).json({
+            success: false,
+            message: "User not authorized",
+        });
+    }
+    next();
+};
+
+const vendorVerify = (req, res, next) => {
+    const user = req.user;
+    if (user.role !== "vendor") {
+        return res.status(403).json({
+            success: false,
+            message: "Vendor not authorized",
+        });
+    }
+    next();
+};
+
+const adminVerify = (req, res, next) => {
+    const user = req.user;
+    if (user.role !== "admin") {
+        return res.status(403).json({
+            success: false,
+            message: "Admin not authorized",
+        });
+    }
+    next();
+};
+
 async function run() {
     try {
         await client.connect();
@@ -36,7 +105,7 @@ async function run() {
         const TransactionCollection = db.collection("transaction");
 
         // Ticket Add
-        app.post("/api/add-ticket", async (req, res) => {
+        app.post("/api/add-ticket", verifyToken, vendorVerify, async (req, res) => {
             const {
                 title,
                 from,
@@ -121,7 +190,7 @@ async function run() {
         });
 
         // SingleTicket Data
-        app.get("/api/vendor/my-tickets/:id", async (req, res) => {
+        app.get("/api/vendor/my-tickets/:id", verifyToken, vendorVerify, async (req, res) => {
             const { id } = req.params;
 
             const query = { _id: new ObjectId(id) };
@@ -142,7 +211,7 @@ async function run() {
         });
 
         // Get My Added Ticket
-        app.get("/api/vendor/my-tickets", async (req, res) => {
+        app.get("/api/vendor/my-tickets", verifyToken, vendorVerify, async (req, res) => {
             const vendorId = req.query.vendorId;
 
             if (!vendorId) {
@@ -163,7 +232,7 @@ async function run() {
         });
 
         // Get ALL tickets (for admin manage tickets page)
-        app.get("/api/admin/all-tickets", async (req, res) => {
+        app.get("/api/admin/all-tickets", verifyToken, adminVerify, async (req, res) => {
             const result = await TicketCollection.find()
                 .sort({ createdAt: -1 })
                 .toArray();
@@ -180,6 +249,7 @@ async function run() {
                 page = 1,
                 limit = 6,
             } = req.query;
+
 
             const filter = {
                 verificationStatus: "approved",
@@ -220,7 +290,7 @@ async function run() {
         });
 
         // Single Ticket By Id
-        app.get("/api/tickets/:id", async (req, res) => {
+        app.get("/api/tickets/:id" ,verifyToken, async (req, res) => {
             const { id } = req.params;
 
             const result = await TicketCollection.findOne({
@@ -242,7 +312,7 @@ async function run() {
         });
 
         // Approve ticket
-        app.patch("/api/admin/tickets/:ticketId/approve", async (req, res) => {
+        app.patch("/api/admin/tickets/:ticketId/approve", verifyToken, adminVerify, async (req, res) => {
             const { ticketId } = req.params;
 
             const ticket = await TicketCollection.findOne({
@@ -288,7 +358,7 @@ async function run() {
         });
 
         // Reject ticket
-        app.patch("/api/admin/tickets/:ticketId/reject", async (req, res) => {
+        app.patch("/api/admin/tickets/:ticketId/reject", verifyToken, adminVerify, async (req, res) => {
             const { ticketId } = req.params;
 
             const ticket = await TicketCollection.findOne({
@@ -309,7 +379,6 @@ async function run() {
                 });
             }
 
-            // If ticket was advertised, remove advertisement
             const updateData = {
                 verificationStatus: "rejected",
                 isAdvertised: false,
@@ -336,7 +405,7 @@ async function run() {
         });
 
         // Get Tickets
-        app.get("/api/admin/approved-tickets", async (req, res) => {
+        app.get("/api/admin/approved-tickets", verifyToken, adminVerify, async (req, res) => {
             const result = await TicketCollection.find({
                 verificationStatus: "approved",
             })
@@ -346,51 +415,47 @@ async function run() {
         });
 
         // Toggle advertise status
-        app.patch(
-            "/api/admin/tickets/:ticketId/advertise",
-            async (req, res) => {
-                const { ticketId } = req.params;
-                const { isAdvertised } = req.body;
+        app.patch("/api/admin/tickets/:ticketId/advertise", verifyToken, adminVerify, async (req, res) => {
+            const { ticketId } = req.params;
+            const { isAdvertised } = req.body;
 
-                if (isAdvertised === true) {
-                    const advertisedCount =
-                        await TicketCollection.countDocuments({
-                            isAdvertised: true,
-                        });
-                    if (advertisedCount >= 6) {
-                        return res.status(400).json({
-                            success: false,
-                            message:
-                                "Maximum 6 tickets can be advertised at a time. Please unadvertise one first.",
-                        });
-                    }
-                }
-
-                const result = await TicketCollection.updateOne(
-                    { _id: new ObjectId(ticketId) },
-                    {
-                        $set: {
-                            isAdvertised: isAdvertised,
-                            advertisedAt: isAdvertised ? new Date() : null,
-                        },
-                    },
-                );
-
-                if (result.modifiedCount === 0) {
-                    return res.status(404).json({
+            if (isAdvertised === true) {
+                const advertisedCount = await TicketCollection.countDocuments({
+                    isAdvertised: true,
+                });
+                if (advertisedCount >= 6) {
+                    return res.status(400).json({
                         success: false,
-                        message: "Ticket not found or no changes made",
+                        message:
+                            "Maximum 6 tickets can be advertised at a time. Please unadvertise one first.",
                     });
                 }
+            }
 
-                res.json({
-                    success: true,
-                    message: isAdvertised
-                        ? "Ticket advertised successfully!"
-                        : "Ticket unadvertised successfully!",
+            const result = await TicketCollection.updateOne(
+                { _id: new ObjectId(ticketId) },
+                {
+                    $set: {
+                        isAdvertised: isAdvertised,
+                        advertisedAt: isAdvertised ? new Date() : null,
+                    },
+                },
+            );
+
+            if (result.modifiedCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Ticket not found or no changes made",
                 });
-            },
-        );
+            }
+
+            res.json({
+                success: true,
+                message: isAdvertised
+                    ? "Ticket advertised successfully!"
+                    : "Ticket unadvertised successfully!",
+            });
+        });
 
         // Get advertised tickets
         app.get("/api/advertised-tickets", async (req, res) => {
@@ -407,7 +472,7 @@ async function run() {
         });
 
         // Ticket Update
-        app.patch("/api/vendor/my-tickets/:id", async (req, res) => {
+        app.patch("/api/vendor/my-tickets/:id", verifyToken, vendorVerify, async (req, res) => {
             const { id } = req.params;
 
             const {
@@ -491,7 +556,7 @@ async function run() {
         });
 
         // Delete Ticket
-        app.delete("/api/vendor/my-tickets/:id", async (req, res) => {
+        app.delete("/api/vendor/my-tickets/:id", verifyToken, vendorVerify, async (req, res) => {
             const { id } = req.params;
 
             const ticketId = { _id: new ObjectId(id) };
@@ -522,7 +587,7 @@ async function run() {
         });
 
         // Role Update
-        app.patch("/api/users/:id/role", async (req, res) => {
+        app.patch("/api/users/:id/role", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             const { role } = req.body;
 
@@ -541,7 +606,7 @@ async function run() {
         });
 
         // Fraud Update
-        app.patch("/api/users/:id/fraud", async (req, res) => {
+        app.patch("/api/users/:id/fraud", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             const { isFraud } = req.body;
 
@@ -573,7 +638,6 @@ async function run() {
                     });
                 }
 
-                // User update
                 await UserCollection.updateOne(
                     { _id: new ObjectId(id) },
                     {
@@ -585,7 +649,6 @@ async function run() {
                     },
                 );
 
-                // Vendor এর সব tickets update
                 const vendorId = user._id.toString();
 
                 const ticketUpdateResult = await TicketCollection.updateMany(
@@ -622,7 +685,7 @@ async function run() {
         });
 
         // Ticket Book By Users
-        app.post("/api/bookings", async (req, res) => {
+        app.post("/api/bookings", verifyToken, userVerify, async (req, res) => {
             const {
                 ticketId,
                 userId,
@@ -713,7 +776,7 @@ async function run() {
         });
 
         // User Booked Tickets
-        app.get("/api/users/my-bookings", async (req, res) => {
+        app.get("/api/users/my-bookings", verifyToken, userVerify, async (req, res) => {
             const { userId } = req.query;
 
             if (!userId) {
@@ -742,7 +805,7 @@ async function run() {
         });
 
         // User Booked Canceled
-        app.patch("/api/bookings/:id/cancel", async (req, res) => {
+        app.patch("/api/bookings/:id/cancel", verifyToken, userVerify, async (req, res) => {
             const { id } = req.params;
             const query = { _id: new ObjectId(id) };
             const updateStatus = {
@@ -772,7 +835,7 @@ async function run() {
         });
 
         // Vendor Booking Request
-        app.get("/api/vendor/booking-requests", async (req, res) => {
+        app.get("/api/vendor/booking-requests", verifyToken, vendorVerify, async (req, res) => {
             const { vendorId } = req.query;
 
             if (!vendorId) {
@@ -816,7 +879,7 @@ async function run() {
         });
 
         // Vendor Booking Accept
-        app.patch("/api/vendor/bookings/:id/accept", async (req, res) => {
+        app.patch("/api/vendor/bookings/:id/accept", verifyToken, vendorVerify, async (req, res) => {
             const { id } = req.params;
             const query = { _id: new ObjectId(id) };
             const booking = await BookingCollection.findOne(query);
@@ -850,7 +913,7 @@ async function run() {
         });
 
         // Vendor Booking Reject
-        app.patch("/api/vendor/bookings/:id/reject", async (req, res) => {
+        app.patch("/api/vendor/bookings/:id/reject", verifyToken, vendorVerify, async (req, res) => {
             const { id } = req.params;
             const query = { _id: new ObjectId(id) };
             const booking = await BookingCollection.findOne(query);
@@ -883,7 +946,7 @@ async function run() {
         });
 
         // Transaction Data add
-        app.post("/api/payment/confirm", async (req, res) => {
+        app.post("/api/payment/confirm", verifyToken, userVerify, async (req, res) => {
             const {
                 transactionId,
                 bookingId,
@@ -979,7 +1042,7 @@ async function run() {
         });
 
         // Transaction Get By Users
-        app.get("/api/users/transactions", async (req, res) => {
+        app.get("/api/users/transactions", verifyToken, userVerify, async (req, res) => {
             const { userId } = req.query;
             if (!userId)
                 return res
@@ -994,7 +1057,7 @@ async function run() {
         });
 
         // Revenue data for Vendor
-        app.get("/api/vendor/revenue-overview", async (req, res) => {
+        app.get("/api/vendor/revenue-overview", verifyToken, vendorVerify, async (req, res) => {
             try {
                 const { vendorId } = req.query;
 
@@ -1095,7 +1158,7 @@ async function run() {
                 allTickets.forEach((t) => {
                     if (!t.createdAt) return;
                     const c = new Date(t.createdAt);
-                    const key = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, "0")}`;
+                    const key = `${c.getFullYear()}-${String(c.getMonth() + 1).padStart(2, "00")}`;
                     if (monthlyData[key]) {
                         monthlyData[key].ticketsAdded +=
                             Number(t.quantity || 0) +
@@ -1238,7 +1301,6 @@ async function run() {
             });
         });
     } finally {
-        // await client.close();
     }
 }
 run().catch(console.dir);
