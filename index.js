@@ -32,7 +32,6 @@ const JWKS = createRemoteJWKSet(
 
 const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
-    console.log("header :" ,authHeader);
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
         return res.status(401).json({
             success: false,
@@ -41,7 +40,6 @@ const verifyToken = async (req, res, next) => {
     }
 
     const token = authHeader.split(" ")[1];
-    console.log("token :" ,token);
     if (!token) {
         return res.status(401).json({
             success: false,
